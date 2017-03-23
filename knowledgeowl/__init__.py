@@ -1,6 +1,9 @@
 """KnowledgeOwl"""
 from __future__ import print_function
+import logging
 import hammock
+from multidimensional_urlencode import urlencode
+import simplejson
 
 # We define the possible keys we can use to update/create an article/category
 # If keys that are present in the response but should not be updated are updated
@@ -88,6 +91,24 @@ class KnowledgeOwl(object):
         self.knowledgeowl = hammock.Hammock(url_string, auth=(api_key, 'X'))
         self.project_id = project_id
 
+
+    def __call(self, hammock_obj, method, **kwargs):
+        resp = getattr(hammock_obj, method.upper())(**kwargs)
+        if resp:
+            try:
+                return resp.json()
+            except simplejson.scanner.JSONDecodeError as error:
+                logging.critical(error)
+                logging.critical('%s Endpoint %s, Args: %s, Error: %s',method, hammock_obj, kwargs, resp.text)
+                logging.critical(resp.text)
+                quit(1)
+                # return resp.text
+        else:
+            logging.critical('%s %s %s, Args: %s, Error: %s',method, hammock_obj, resp.status_code, kwargs, resp.text)
+            if resp.status_code != 400:
+                quit(1)
+
+
     def create_article(self, **kwargs):
         """Create KnowledgeOwl Article."""
         for key in ['name', 'visibility', 'status', 'url_hash']:
@@ -97,7 +118,8 @@ class KnowledgeOwl(object):
             if key not in ARTICLE_KEYS:
                 raise InvalidArg(key)
         kwargs['project_id'] = self.project_id
-        return self.knowledgeowl('article.json').POST(data=kwargs).json()
+        logging.debug('POST data for create_article: %s', kwargs)
+        return self.__call(self.knowledgeowl.article, 'POST', data=urlencode(kwargs))
 
     def list_articles(self, **kwargs):
         """List all articles."""
@@ -107,15 +129,16 @@ class KnowledgeOwl(object):
             if key not in m_keys:
                 raise InvalidArg(key)
 
-        return self.knowledgeowl.article.GET(params=kwargs).json()
+        return self.__call(self.knowledgeowl.article, 'GET', params=urlencode(kwargs))
 
     def get_article(self, article_id, **kwargs):
         """Retrieve article and it's current version html."""
         for key in kwargs:
             if key not in ['replaceSnippets', '_fields']:
                 raise InvalidArg(key)
-        return self.knowledgeowl.article(article_id).GET(data={'_fields': 'current_version'},
-                                                         params=kwargs).json()
+        return self.__call(self.knowledgeowl.article(article_id), 'GET',
+                           data=urlencode({'_fields': 'current_version'}),
+                           params=urlencode(kwargs))
 
     def update_article(self, article_id, **kwargs):
         """Update article attributes.
@@ -125,26 +148,36 @@ class KnowledgeOwl(object):
         for key in kwargs:
             if key not in ARTICLE_KEYS:
                 raise InvalidArg(key)
-        return self.knowledgeowl.article(article_id).PUT(data=kwargs).json()
+        logging.debug('PUT data for update_article: %s', kwargs)
+        return self.__call(self.knowledgeowl.article(article_id), 'PUT',
+                           params=urlencode(kwargs))
 
-    def update_article_content(self, article_id, locale, html, title=None):
+    def update_article_content(self, article_id, locale, html, title=None,
+                               url_hash=None):
         """Update article content html and optionally title."""
-        data = {'current_version': {locale: {'text': html}}}
-        if title:
-            data['current_version'][locale]['title'] = title
-        return self.update_article(article_id, **data).json()
+        # If we aren't updating the title we still need to provide it or else it gets set to blank
+        if not title:
+            title = self.get_article(article_id)['current_version'][locale]['title']
+        data = {'current_version': {locale: {'text': html, 'title': title}}}
+        if url_hash:
+            data['url_hash'] = url_hash
+        return self.update_article(article_id, **data)
 
     def search_articles(self, phrase, **kwargs):
         """Search article matching phrase."""
         for key in kwargs:
             if key not in ['status', '_fields', 'limit']:
                 raise InvalidArg(key)
-        return self.knowledgeowl.suggest.GET(data={'phrase': phrase},
-                                             params=kwargs).json()
+        return self.__call(self.knowledgeowl.suggest, 'GET',
+                           data=urlencode({'phrase': phrase}),
+                           params=urlencode(kwargs)).json()
 
     def delete_article(self, article_id):
         """Delete article."""
         return self.update_article(article_id, status='deleted')
+
+    def list_articles_by_category(self, category_id):
+        return self.list_articles(category=category_id)
 
     ############################################################################
     def list_categories(self):
@@ -167,7 +200,7 @@ class KnowledgeOwl(object):
             if key not in CATEGORY_KEYS:
                 raise InvalidArg(key)
         kwargs['project_id'] = self.project_id
-        return self.knowledgeowl('category.json').POST(data=kwargs).json()
+        return self.__call(self.knowledgeowl.category, 'POST', data=urlencode(kwargs))
 
     def update_category(self, category_id, **kwargs):
         """Update category.
@@ -177,18 +210,15 @@ class KnowledgeOwl(object):
         for key in kwargs:
             if key not in CATEGORY_KEYS:
                 raise InvalidArg(key)
-        return self.knowledgeowl.category(category_id).PUT(data=kwargs).json()
+        return self.__call(self.knowledgeowl.category(category_id), 'PUT', params=urlencode(kwargs))
 
     def get_category(self, category_id):
         """Get Category."""
-        return self.knowledgeowl.category(category_id).GET().json()
+        return self.__call(self.knowledgeowl.category(category_id), 'GET')
 
     def delete_category(self, category_id):
         """Delete Category."""
         return self.update_category(category_id, status='deleted')
-
-    def get_articles_by_category(self, category_id):
-        return self.list_articles(category=category_id)
 
     ############################################################################
     def get_comment(self, comment_id, **kwargs):
@@ -196,14 +226,13 @@ class KnowledgeOwl(object):
             if key not in ['_fields']:
                 raise InvalidArg(key)
         kwargs['project_id'] = self.project_id
-        return self.knowledgeowl.comment(comment_id).GET(params=kwargs).json()
+        return self.__call(self.knowledgeowl.comment(comment_id), 'GET', params=urlencode(kwargs))
 
     def list_comments(self, **kwargs):
         for key in kwargs:
             if key not in ['article_id', '_fields', 'sort', 'limit']:
                 raise InvalidArg(key)
-        kwargs['project_id'] = self.project_id
-        return self.knowledgeowl.comment.GET(params=kwargs).json()
+        return self.__call(self.knowledgeowl.comment, 'GET', params=urlencode(kwargs))
 
     ############################################################################
     def list_readers(self, **kwargs):
@@ -211,7 +240,7 @@ class KnowledgeOwl(object):
             if key not in READER_KEYS or key not in ['_fields', 'sort', 'limit']:
                 raise InvalidArg(key)
         kwargs['project_id'] = self.project_id
-        return self.knowledgeowl.reader.GET(params=kwargs).json()
+        return self.__call(self.knowledgeowl.reader, 'GET', params=kwargs)
 
     ############################################################################
     def list_readerroles(self, _fields=None, sort=None, limit=None, **params):
@@ -219,15 +248,16 @@ class KnowledgeOwl(object):
             if key not in READERROLES_KEYS or key not in ['_fields', 'sort', 'limit']:
                 raise InvalidArg(key)
         kwargs['project_id'] = self.project_id
-        return self.knowledgeowl.readerroles.GET(params=kwargs).json()
+        return self.__call(self.knowledgeowl.readerroles, 'GET', params=urlencode(kwargs))
 
     def get_readerroles(self, role_id, **kwargs):
         for key in kwargs:
             if key not in ['_fields']:
                 raise InvalidArg(key)
         kwargs['project_id'] = self.project_id
-        return self.knowledgeowl.readerroles(role_id).GET(params=kwargs).json()
+        return self.__call(self.knowledgeowl.readerroles(role_id), 'GET', params=urlencode(kwargs))
+        return self.knowledgeowl.readerroles(role_id).GET(params=urlencode(kwargs)).json()
 
     ############################################################################
     def explain(self, endpoint):
-        return self.knowledgeowl(endpoint).GET(params={'_method': 'explain'}).json()
+        self.__call(self.knowledgeowl(endpoint), 'GET', params=urlencode({'_method': 'explain'}))

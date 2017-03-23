@@ -41,7 +41,7 @@ setup(
     ],
     keywords='knowledgeowl',
     packages=find_packages(),
-    install_requires=['hammock'],
+    install_requires=['hammock', 'multidimensional_urlencode'],
     extras_require={},
     package_data={},
     data_files=[],
