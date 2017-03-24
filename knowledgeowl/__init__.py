@@ -4,6 +4,7 @@ import logging
 import hammock
 from multidimensional_urlencode import urlencode
 import simplejson
+import json
 
 # We define the possible keys we can use to update/create an article/category
 # If keys that are present in the response but should not be updated are updated
@@ -88,7 +89,7 @@ class KnowledgeOwl(object):
     """KnowledgeOwl interface."""
     def __init__(self, api_key, project_id, version='head'):
         url_string = 'https://app.knowledgeowl.com/api/{0}'.format(version)
-        self.knowledgeowl = hammock.Hammock(url_string, auth=(api_key, 'X'))
+        self.knowledgeowl = hammock.Hammock(url_string, auth=(api_key, 'X'), headers={'Content-Type': 'application/json'})
         self.project_id = project_id
 
 
@@ -101,8 +102,7 @@ class KnowledgeOwl(object):
                 logging.critical(error)
                 logging.critical('%s Endpoint %s, Args: %s, Error: %s',method, hammock_obj, kwargs, resp.text)
                 logging.critical(resp.text)
-                quit(1)
-                # return resp.text
+                raise
         else:
             logging.critical('%s %s %s, Args: %s, Error: %s',method, hammock_obj, resp.status_code, kwargs, resp.text)
             if resp.status_code != 400:
@@ -119,7 +119,7 @@ class KnowledgeOwl(object):
                 raise InvalidArg(key)
         kwargs['project_id'] = self.project_id
         logging.debug('POST data for create_article: %s', kwargs)
-        return self.__call(self.knowledgeowl.article, 'POST', data=urlencode(kwargs))
+        return self.__call(self.knowledgeowl.article, 'POST', data=json.dumps(kwargs))
 
     def list_articles(self, **kwargs):
         """List all articles."""
@@ -137,7 +137,7 @@ class KnowledgeOwl(object):
             if key not in ['replaceSnippets', '_fields']:
                 raise InvalidArg(key)
         return self.__call(self.knowledgeowl.article(article_id), 'GET',
-                           data=urlencode({'_fields': 'current_version'}),
+                           data=json.dumps({'_fields': 'current_version'}),
                            params=urlencode(kwargs))
 
     def update_article(self, article_id, **kwargs):
@@ -150,7 +150,7 @@ class KnowledgeOwl(object):
                 raise InvalidArg(key)
         logging.debug('PUT data for update_article: %s', kwargs)
         return self.__call(self.knowledgeowl.article(article_id), 'PUT',
-                           params=urlencode(kwargs))
+                           data=json.dumps(kwargs))
 
     def update_article_content(self, article_id, locale, html, title=None,
                                url_hash=None):
@@ -200,7 +200,7 @@ class KnowledgeOwl(object):
             if key not in CATEGORY_KEYS:
                 raise InvalidArg(key)
         kwargs['project_id'] = self.project_id
-        return self.__call(self.knowledgeowl.category, 'POST', data=urlencode(kwargs))
+        return self.__call(self.knowledgeowl.category, 'POST', data=json.dumps(kwargs))
 
     def update_category(self, category_id, **kwargs):
         """Update category.
@@ -210,7 +210,7 @@ class KnowledgeOwl(object):
         for key in kwargs:
             if key not in CATEGORY_KEYS:
                 raise InvalidArg(key)
-        return self.__call(self.knowledgeowl.category(category_id), 'PUT', params=urlencode(kwargs))
+        return self.__call(self.knowledgeowl.category(category_id), 'PUT', data=json.dumps(kwargs))
 
     def get_category(self, category_id):
         """Get Category."""
@@ -256,7 +256,6 @@ class KnowledgeOwl(object):
                 raise InvalidArg(key)
         kwargs['project_id'] = self.project_id
         return self.__call(self.knowledgeowl.readerroles(role_id), 'GET', params=urlencode(kwargs))
-        return self.knowledgeowl.readerroles(role_id).GET(params=urlencode(kwargs)).json()
 
     ############################################################################
     def explain(self, endpoint):
